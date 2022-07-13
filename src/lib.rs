@@ -2,15 +2,15 @@ use near_contract_standards::fungible_token::metadata::{FungibleTokenMetadata, F
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LazyOption;
 use near_sdk::json_types::U128;
-use near_sdk::{env, log, near_bindgen, AccountId, Balance, BorshStorageKey, PanicOnDefault};
-use token::OCCToken;
+use near_sdk::{env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault};
+use token_impl::{OCCToken, ProjectId, TokenStorageKey};
 
 mod metadata;
 mod token;
+mod token_impl;
 
 #[derive(BorshSerialize, BorshStorageKey)]
 enum StorageKey {
-    OccToken,
     Metadata,
 }
 #[near_bindgen]
@@ -25,9 +25,14 @@ const DATA_IMAGE_SVG_NEAR_ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new_default_meta(owner_id: AccountId, total_supply: U128) -> Self {
+    pub fn new_default_meta(
+        owner_id: AccountId,
+        project_id: ProjectId,
+        total_supply: U128,
+    ) -> Self {
         Self::new(
             owner_id,
+            project_id,
             total_supply,
             FungibleTokenMetadata {
                 spec: FT_METADATA_SPEC.to_string(),
@@ -42,17 +47,23 @@ impl Contract {
     }
 
     #[init]
-    pub fn new(owner_id: AccountId, total_supply: U128, metadata: FungibleTokenMetadata) -> Self {
+    pub fn new(
+        owner_id: AccountId,
+        project_id: ProjectId,
+        total_supply: U128,
+        metadata: FungibleTokenMetadata,
+    ) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         metadata.assert_valid();
 
         let mut this = Self {
-            token: OCCToken::new(StorageKey::OccToken),
+            token: OCCToken::new(TokenStorageKey::OccToken),
             metadata: LazyOption::new(StorageKey::Metadata, Some(&metadata)),
         };
 
-        this.token.internal_register_account(&owner_id);
-        this.token.internal_deposit(&owner_id, total_supply.into());
+        this.token.internal_register_account(&owner_id, &project_id);
+        this.token
+            .internal_deposit(&owner_id, &project_id, total_supply.into());
         // near_contract_standards::fungible_token::events::FtMint {
         //     owner_id: &owner_id,
         //     amount: &total_supply,
@@ -62,13 +73,13 @@ impl Contract {
         this
     }
 
-    fn on_account_closed(&mut self, account_id: AccountId, balance: Balance) {
-        log!("Closed @{} with {}", account_id, balance);
-    }
+    // fn on_account_closed(&mut self, account_id: AccountId, balance: Balance) {
+    //     log!("Closed @{} with {}", account_id, balance);
+    // }
 
-    fn on_tokens_burned(&mut self, account_id: AccountId, amount: Balance) {
-        log!("Account @{} burned {}", account_id, amount);
-    }
+    // fn on_tokens_burned(&mut self, account_id: AccountId, amount: Balance) {
+    //     log!("Account @{} burned {}", account_id, amount);
+    // }
 }
 
 // near_contract_standards::impl_fungible_token_core!(Contract, token, on_tokens_burned);
@@ -80,6 +91,7 @@ mod tests {
     use near_sdk::{testing_env, Balance};
 
     use super::*;
+    use crate::token::OccTokenCore;
 
     const TOTAL_SUPPLY: Balance = 1_000_000_000_000_000;
 
@@ -104,30 +116,38 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn test_default_new() {
-    //     let mut context = get_context(accounts(1));
-    //     testing_env!(context.build());
-    //     let contract = Contract::new_default_meta(accounts(1).into(), TOTAL_SUPPLY.into());
-    //     testing_env!(context.is_view(true).build());
-    //     assert_eq!(contract.ft_total_supply().0, TOTAL_SUPPLY);
-    //     assert_eq!(contract.ft_balance_of(accounts(1)).0, TOTAL_SUPPLY);
-    // }
+    #[test]
+    fn test_default_new() {
+        let mut context = get_context(accounts(1));
+        testing_env!(context.build());
+        let contract = Contract::new_default_meta(accounts(1).into(), 1, TOTAL_SUPPLY.into());
+        testing_env!(context.is_view(true).build());
 
-    // #[test]
-    // fn test_new() {
-    //     let mut context = get_context(accounts(2));
-    //     testing_env!(context.build());
-    //     let contract = Contract::new(
-    //         accounts(2).into(),
-    //         TOTAL_SUPPLY.into(),
-    //         sample_ft_metadata(),
-    //     );
-    //     testing_env!(context.is_view(true).build());
-    //     assert_eq!(contract.ft_total_supply().0, TOTAL_SUPPLY);
-    //     assert_eq!(contract.ft_balance_of(accounts(2)).0, TOTAL_SUPPLY);
-    //     assert_eq!(contract.ft_metadata().name, sample_ft_metadata().name)
-    // }
+        assert_eq!(contract.token.ft_total_supply(), TOTAL_SUPPLY);
+        assert_eq!(
+            contract.token.ft_balance_of_project(accounts(1).into(), 1),
+            TOTAL_SUPPLY
+        );
+    }
+
+    #[test]
+    fn test_new() {
+        let mut context = get_context(accounts(2));
+        testing_env!(context.build());
+        let contract = Contract::new(
+            accounts(2).into(),
+            2,
+            TOTAL_SUPPLY.into(),
+            sample_ft_metadata(),
+        );
+        testing_env!(context.is_view(true).build());
+        assert_eq!(contract.token.ft_total_supply(), TOTAL_SUPPLY);
+        assert_eq!(
+            contract.token.ft_balance_of_project(accounts(2).into(), 2),
+            TOTAL_SUPPLY
+        );
+        // assert_eq!(contract.ft_metadata().name, sample_ft_metadata().name)
+    }
 
     #[test]
     #[should_panic(expected = "The contract is not initialized")]
